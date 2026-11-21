@@ -1,0 +1,3 @@
+# Cài bằng:  pip install -r requirements.txt
+pillow>=13.0
+bleak>=3.0

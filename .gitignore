@@ -1,0 +1,14 @@
+# Môi trường ảo – mỗi máy tự tạo lại
+.venv/
+__pycache__/
+
+# Bí mật & dữ liệu riêng của từng máy
+config.toml
+cache/
+logs/
+out/
+*.bak
+
+# Ảnh sinh ra khi chạy
+preview*.png
+font_test*.png

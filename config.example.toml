@@ -1,0 +1,6 @@
+# Mẫu cấu hình. Copy thành config.toml rồi điền giá trị thật:
+#   macOS:   cp config.example.toml config.toml
+#   Windows: copy config.example.toml config.toml
+[gemini]
+secret = "DAN-KHOA-BI-MAT-CUA-BAN-VAO-DAY"   # tạo bằng: python -c "import secrets; print(secrets.token_hex(16))"
+port = 8765

@@ -1,0 +1,5 @@
+# Script Windows luôn giữ xuống dòng kiểu Windows (CRLF)
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+* text=auto
+*.ttf binary
