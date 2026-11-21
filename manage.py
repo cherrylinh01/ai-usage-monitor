@@ -4,6 +4,7 @@
   python manage.py status                   kiểm tra từng thành phần có hoạt động không
   python manage.py switch-account [claude|gemini|all]   đổi tài khoản
   python manage.py new-key                  tạo khoá bí mật mới cho server Gemini
+  manage.cmd install-tasks | uninstall-tasks | run-now     [chỉ Windows] Task Scheduler
 
 Lệnh 'setup' chỉ dùng thư viện chuẩn -> chạy được bằng Python hệ thống trước khi có .venv.
 """
@@ -156,6 +157,14 @@ def cmd_status(_args) -> None:
                else "mở 1 tab Gemini (userscript tự cập nhật mỗi 30 phút)")
         check(hours <= max_h, f"{name}.json cập nhật {text}  {detail}", fix)
 
+    if IS_WIN:
+        print("\nTask Scheduler (chạy tự động)")
+        tasks = windows_task_lines()
+        if not tasks:
+            check(False, "Chưa cài tác vụ tự động", "manage.cmd install-tasks")
+        for ok, msg in tasks:
+            check(ok, msg, "xem logs\\monitor.log hoặc logs\\receiver.log")
+
     log = ROOT / "logs" / "monitor.log"
     if log.exists():
         print("\n3 dòng cuối logs/monitor.log")
@@ -163,6 +172,114 @@ def cmd_status(_args) -> None:
             print("   ", line)
 
     print(f"\n{'Mọi thứ ổn.' if problems == 0 else f'Có {problems} mục cần xử lý (xem dấu [!!]).'}")
+
+
+# ---------------- Windows Task Scheduler ----------------
+TASK_PATH = "\\AIUsageMonitor\\"          # thư mục riêng trong Task Scheduler cho gọn
+TASK_SERVER = "Gemini receiver"
+TASK_UPDATE = "Update display"
+UPDATE_EVERY_MIN = 30
+
+
+def ps_quote(value) -> str:
+    """Bọc chuỗi trong nháy đơn của PowerShell (nháy đơn bên trong nhân đôi)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def run_ps(script: str) -> subprocess.CompletedProcess:
+    """Chạy script PowerShell. Dùng -EncodedCommand (base64 UTF-16LE) để tránh mọi lỗi
+    về dấu nháy, dấu cách trong đường dẫn hay ký tự tiếng Việt khi truyền qua dòng lệnh."""
+    import base64
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+
+
+def require_windows() -> None:
+    if not IS_WIN:
+        sys.exit("Lệnh này chỉ dành cho Windows (Task Scheduler).")
+
+
+def cmd_install_tasks(_args) -> None:
+    require_windows()
+    pythonw = VENV_DIR / "Scripts" / "pythonw.exe"
+    if not pythonw.exists():
+        sys.exit("Chưa có .venv – chạy: manage.cmd setup")
+    port = load_config()["gemini"].get("port", 8765)
+    if port_open(port):
+        sys.exit(f"Cổng {port} đang bận: hãy ĐÓNG cửa sổ đang chạy gemini_receiver.py bằng tay "
+                 "(Ctrl+C) rồi chạy lại lệnh này – Task Scheduler sẽ thay nó chạy nền.")
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$root = {ps_quote(ROOT)}
+$pyw  = {ps_quote(pythonw)}
+$user = "$env:USERDOMAIN\\$env:USERNAME"
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+
+# 1) Server Gemini: chạy khi đăng nhập, không giới hạn thời gian, chết thì tự bật lại
+$a1 = New-ScheduledTaskAction -Execute $pyw -Argument '"gemini_receiver.py"' -WorkingDirectory $root
+$t1 = New-ScheduledTaskTrigger -AtLogOn -User $user
+$s1 = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_SERVER)} -Action $a1 -Trigger $t1 `
+  -Settings $s1 -Principal $principal -Description 'AI Usage Monitor: nhận số liệu Gemini từ userscript' -Force | Out-Null
+
+# 2) Cập nhật thẻ: 2 phút sau khi đăng nhập, rồi lặp mỗi {UPDATE_EVERY_MIN} phút (vô thời hạn)
+$a2 = New-ScheduledTaskAction -Execute $pyw -Argument '"main.py"' -WorkingDirectory $root
+$t2 = New-ScheduledTaskTrigger -AtLogOn -User $user
+$t2.Delay = 'PT2M'
+$t2.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+                   -RepetitionInterval (New-TimeSpan -Minutes {UPDATE_EVERY_MIN})).Repetition
+$s2 = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_UPDATE)} -Action $a2 -Trigger $t2 `
+  -Settings $s2 -Principal $principal -Description 'AI Usage Monitor: lấy số liệu, vẽ và gửi lên thẻ' -Force | Out-Null
+
+# Chạy ngay, không cần đăng xuất/đăng nhập lại
+Start-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_SERVER)}
+Start-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_UPDATE)}
+Write-Output 'INSTALLED'
+"""
+    r = run_ps(script)
+    if "INSTALLED" not in r.stdout:
+        print(r.stdout, r.stderr, sep="\n")
+        sys.exit("Cài tác vụ thất bại (xem lỗi ở trên).")
+    print(f"Đã cài 2 tác vụ trong Task Scheduler > Task Scheduler Library > AIUsageMonitor:")
+    print(f"  - {TASK_SERVER}: chạy nền khi đăng nhập (log: logs\\receiver.log)")
+    print(f"  - {TASK_UPDATE}: 2 phút sau đăng nhập, rồi mỗi {UPDATE_EVERY_MIN} phút (log: logs\\monitor.log)")
+    print("Cả hai vừa được chạy thử. Đợi ~20 giây rồi kiểm tra: manage.cmd status")
+
+
+def cmd_uninstall_tasks(_args) -> None:
+    require_windows()
+    r = run_ps(f"Get-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -ErrorAction SilentlyContinue | "
+               "ForEach-Object { Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; $_ } | "
+               "Unregister-ScheduledTask -Confirm:$false; Write-Output 'REMOVED'")
+    print("Đã gỡ các tác vụ AIUsageMonitor." if "REMOVED" in r.stdout else r.stderr)
+
+
+def cmd_run_now(_args) -> None:
+    require_windows()
+    r = run_ps(f"Start-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_UPDATE)}; "
+               "Write-Output 'STARTED'")
+    print("Đã chạy tác vụ cập nhật. Xem kết quả: logs\\monitor.log" if "STARTED" in r.stdout else r.stderr)
+
+
+def windows_task_lines() -> list[tuple[bool, str]]:
+    """[(ok, mô tả)] cho từng tác vụ – dùng trong 'status'."""
+    r = run_ps(f"Get-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -ErrorAction SilentlyContinue | "
+               "ForEach-Object { $i = $_ | Get-ScheduledTaskInfo; "
+               "'{0}|{1}|{2}|{3:yyyy-MM-dd HH:mm}' -f $_.TaskName, $_.State, $i.LastTaskResult, $i.LastRunTime }")
+    meaning = {"0": "thành công", "1": "lỗi (xem log)", "267009": "đang chạy", "267011": "chưa chạy lần nào"}
+    out = []
+    for line in r.stdout.strip().splitlines():
+        name, state, result, last = (line.split("|") + ["", "", "", ""])[:4]
+        ok = state != "Disabled" and result in ("0", "267009", "267011")
+        out.append((ok, f"Tác vụ '{name}': {state}, lần chạy cuối {last} -> {meaning.get(result, 'mã ' + result)}"))
+    return out
 
 
 # ---------------- switch-account ----------------
@@ -198,6 +315,9 @@ def main() -> None:
     sub.add_parser("setup", help="cài lần đầu").set_defaults(func=cmd_setup)
     sub.add_parser("status", help="kiểm tra tổng thể").set_defaults(func=cmd_status)
     sub.add_parser("new-key", help="tạo khoá bí mật mới").set_defaults(func=cmd_new_key)
+    sub.add_parser("install-tasks", help="[Windows] cài 2 tác vụ chạy tự động").set_defaults(func=cmd_install_tasks)
+    sub.add_parser("uninstall-tasks", help="[Windows] gỡ các tác vụ tự động").set_defaults(func=cmd_uninstall_tasks)
+    sub.add_parser("run-now", help="[Windows] chạy tác vụ cập nhật ngay").set_defaults(func=cmd_run_now)
     sw = sub.add_parser("switch-account", help="đổi tài khoản")
     sw.add_argument("which", nargs="?", choices=["claude", "gemini", "all"], default="all")
     sw.set_defaults(func=cmd_switch)

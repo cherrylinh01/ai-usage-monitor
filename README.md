@@ -16,7 +16,10 @@ Gemini (Chrome + userscript) ──►        │   (ảnh 3 màu)  (lớp đen/
 
 ## Cài trên máy mới
 
-Yêu cầu: Python **3.11+** (khuyên 3.13 trên Windows), Chrome, Claude Code.
+> 🪟 **Windows: làm theo hướng dẫn từng bước [docs/HUONG_DAN_WINDOWS.md](docs/HUONG_DAN_WINDOWS.md)**
+> (cài công cụ, clone, đăng nhập Claude/Gemini, chạy tự động bằng Task Scheduler, xử lý sự cố).
+
+Tóm tắt – yêu cầu: Python **3.11+** (khuyên 3.13 trên Windows), Chrome, Claude Code.
 
 ```bash
 git clone https://github.com/<tài-khoản>/ai-usage-monitor.git
@@ -53,6 +56,8 @@ không ghi nhầm mẫu request của tài khoản khác.
 | Chạy 1 vòng (không gửi BLE) | `python main.py --no-ble` |
 | Xem trước ảnh | mở `preview.png` |
 | Đổi khoá bí mật Gemini | `python manage.py new-key` |
+| [Windows] Cài / gỡ chạy tự động | `manage.cmd install-tasks` / `manage.cmd uninstall-tasks` |
+| [Windows] Cập nhật ngay | `manage.cmd run-now` |
 
 (Trên Windows thay `python` bằng `.venv\Scripts\python`, hoặc dùng `manage.cmd <lệnh>`.)
 
