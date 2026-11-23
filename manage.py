@@ -410,7 +410,7 @@ def mac_task_lines() -> list[tuple[bool, str]]:
         r = _launchctl("print", f"gui/{os.getuid()}/{label}")
         if r.returncode != 0:
             continue
-        state = re.search(r"^\s*state = (\S+)", r.stdout, re.M)
+        state = re.search(r"^\s*state = (.+)$", r.stdout, re.M)
         code = re.search(r"last exit code = (.+)$", r.stdout, re.M)
         code = code.group(1).strip() if code else ""
         state = state.group(1) if state else "?"
