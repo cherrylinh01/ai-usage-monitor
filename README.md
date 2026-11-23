@@ -16,6 +16,8 @@ Gemini (Chrome + userscript) ──►        │   (ảnh 3 màu)  (lớp đen/
 
 ## Cài trên máy mới
 
+> 📋 **Báo cáo tổng kết (kiến trúc, chi tiết kết nối, kết quả kiểm thử): [docs/BAO_CAO_TONG_KET.md](docs/BAO_CAO_TONG_KET.md)**
+>
 > 🪟 **Windows: làm theo hướng dẫn từng bước [docs/HUONG_DAN_WINDOWS.md](docs/HUONG_DAN_WINDOWS.md)**
 > (cài công cụ, clone, đăng nhập Claude/Gemini, chạy tự động bằng Task Scheduler, xử lý sự cố).
 

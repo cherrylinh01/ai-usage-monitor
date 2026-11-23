@@ -24,13 +24,15 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # pythonw.exe không có cửa sổ -> sys.stdout/stderr = None -> mọi print() và lỗi sẽ biến mất.
 # Chuyển hướng chúng vào file để vẫn đọc được khi có sự cố.
-if sys.stdout is None or sys.stderr is None:
+HEADLESS = sys.stdout is None or sys.stderr is None
+if HEADLESS:
     sys.stdout = sys.stderr = open(LOG_DIR / "stdout.log", "a", encoding="utf-8", buffering=1)
 
 handlers: list[logging.Handler] = [
     RotatingFileHandler(LOG_DIR / "monitor.log", maxBytes=200_000, backupCount=2, encoding="utf-8"),
-    logging.StreamHandler(sys.stdout),
 ]
+if not HEADLESS:   # có cửa sổ -> in thêm ra màn hình; chạy nền thì chỉ ghi monitor.log (tránh ghi trùng)
+    handlers.append(logging.StreamHandler(sys.stdout))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s", handlers=handlers)
 log = logging.getLogger("monitor")
 
