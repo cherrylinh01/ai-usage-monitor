@@ -37,8 +37,8 @@ MODE_STOP_CLOCK, MODE_PICTURE = 0, 3
 def ble_config() -> dict:
     """[ble] trong config.toml (không bắt buộc): name_prefix, address."""
     try:
-        return tomllib.loads((ROOT / "config.toml").read_text(encoding="utf-8")).get("ble", {})
-    except OSError:
+        return tomllib.loads((ROOT / "config.toml").read_text(encoding="utf-8-sig")).get("ble", {})
+    except (OSError, ValueError):   # thiếu file / file TOML hỏng -> dùng mặc định
         return {}
 
 

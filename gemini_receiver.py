@@ -1,5 +1,6 @@
 """Server nhỏ nhận số liệu Gemini từ userscript, lưu vào cache/gemini.json."""
 import json
+import os
 import sys
 import tomllib
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ if sys.stdout is None or sys.stderr is None:
     (ROOT / "logs").mkdir(exist_ok=True)
     sys.stdout = sys.stderr = open(ROOT / "logs" / "receiver.log", "a", encoding="utf-8", buffering=1)
 
-CONFIG = tomllib.loads((ROOT / "config.toml").read_text(encoding="utf-8"))["gemini"]
+CONFIG = tomllib.loads((ROOT / "config.toml").read_text(encoding="utf-8-sig"))["gemini"]
 HOST, PORT = "127.0.0.1", CONFIG.get("port", 8765)  # chỉ máy này truy cập được
 SECRET = CONFIG["secret"]                           # khoá nằm trong config.toml, không nằm trong code
 CACHE_FILE = ROOT / "cache" / "gemini.json"
@@ -64,8 +65,11 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as e:
             return self._reply(400, f"bad data: {e}")
         CACHE_FILE.parent.mkdir(exist_ok=True)
-        CACHE_FILE.write_text(json.dumps(result, indent=2), encoding="utf-8")
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} [gemini] {result['plan']} | 5H {result['session']['percent']}% | 7D {result['weekly']['percent']}%")
+        # Ghi ra file tạm rồi đổi tên: main.py đọc cùng lúc cũng không bao giờ thấy file ghi dở.
+        tmp = CACHE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        os.replace(tmp, CACHE_FILE)
+        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} [gemini] {result['plan']} | 5H {result['session']['percent']}% | 7D {result['weekly']['percent']}%", flush=True)
         self._reply(200, "ok")
 
     def _reply(self, code: int, msg: str):
@@ -79,5 +83,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Đang lắng nghe http://{HOST}:{PORT}/gemini  (Ctrl+C để dừng)")
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Đang lắng nghe http://{HOST}:{PORT}/gemini  (Ctrl+C để dừng)", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

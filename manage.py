@@ -37,7 +37,7 @@ for stream in (sys.stdout, sys.stderr):
 
 # ---------------- tiện ích ----------------
 def load_config() -> dict:
-    return tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    return tomllib.loads(CONFIG.read_text(encoding="utf-8-sig"))
 
 
 def venv_cmd(*args: str) -> str:
@@ -100,7 +100,7 @@ def cmd_setup(_args) -> None:
 
 # ---------------- new-key ----------------
 def cmd_new_key(_args) -> None:
-    text = CONFIG.read_text(encoding="utf-8")
+    text = CONFIG.read_text(encoding="utf-8-sig")
     old = load_config()["gemini"]["secret"]
     CONFIG.write_text(text.replace(old, secrets.token_hex(16), 1), encoding="utf-8")
     print("Đã đổi khoá trong config.toml.")

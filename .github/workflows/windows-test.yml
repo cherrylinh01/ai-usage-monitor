@@ -1,0 +1,80 @@
+# Kiểm thử trên một máy Windows THẬT của GitHub (không cần thẻ, không cần đăng nhập).
+# Chỉ chạy khi bấm tay (Actions > Windows test > Run workflow) hoặc: gh workflow run windows-test.yml
+name: Windows test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: "1. manage.cmd setup (tạo .venv, cài thư viện, tạo config.toml)"
+        shell: cmd
+        run: |
+          manage.cmd setup
+          .venv\Scripts\python --version
+          .venv\Scripts\python -c "import PIL, bleak; print('Pillow', PIL.__version__, '| bleak import OK')"
+
+      - name: "2. Kiểm thử tự động (smoke test)"
+        shell: cmd
+        run: .venv\Scripts\python tests\smoke_test.py
+
+      - name: "3. send_ble: máy không có Bluetooth -> phải báo lỗi êm, không crash"
+        shell: cmd
+        run: .venv\Scripts\python -c "import send_ble, logging; logging.basicConfig(level=logging.INFO); ok = send_ble.send(bytes(4736), bytes(4736), refresh_wait=0); print('send() trả về', ok); assert ok is False"
+
+      - name: "4. manage.cmd install-tasks (Task Scheduler)"
+        shell: cmd
+        run: manage.cmd install-tasks
+
+      - name: "5. Soát tác vụ đã đăng ký + chu kỳ lặp"
+        if: always()
+        shell: powershell
+        run: |
+          Get-ScheduledTask -TaskPath '\AIUsageMonitor\' | ForEach-Object {
+            $i = $_ | Get-ScheduledTaskInfo
+            "{0}: State={1} LastResult={2} Execute={3} Args={4} WorkDir={5}" -f $_.TaskName, $_.State, $i.LastTaskResult, $_.Actions[0].Execute, $_.Actions[0].Arguments, $_.Actions[0].WorkingDirectory
+            $_.Triggers | ForEach-Object { "   Trigger: {0} Delay={1} Repeat every={2} for={3}" -f $_.CimClass.CimClassName, $_.Delay, $_.Repetition.Interval, $(if ($_.Repetition.Duration) { $_.Repetition.Duration } else { 'Indefinitely' }) }
+          }
+
+      - name: "6. Server Gemini chạy nền bằng pythonw (qua Task Scheduler) có nhận dữ liệu không"
+        if: always()
+        shell: powershell
+        run: |
+          Start-Sleep 15
+          $key = (Select-String -Path config.toml -Pattern 'secret = "([^"]+)"').Matches[0].Groups[1].Value
+          $body = '{"tier":"TIER1","windows":[{"poolType":"GXU_FIVE_HOURLY","percentageUsed":0.2,"windowRefreshesAt":"2030-01-01T00:00:00Z"},{"poolType":"GXU_WEEKLY","percentageUsed":0.1,"windowRefreshesAt":"2030-01-05T00:00:00Z"}]}'
+          try {
+            $r = Invoke-WebRequest -UseBasicParsing -Uri http://127.0.0.1:8765/gemini -Method Post -Body $body -ContentType 'application/json' -Headers @{ 'X-Monitor-Key' = $key }
+            "HTTP $($r.StatusCode) $($r.Content)"
+            Get-Content cache\gemini.json
+          } catch { "KHÔNG kết nối được server: $_" }
+          if (Test-Path logs\receiver.log) { "--- logs\receiver.log"; Get-Content logs\receiver.log -Tail 5 }
+
+      - name: "7. manage.cmd run-now + status + log"
+        if: always()
+        shell: cmd
+        run: |
+          manage.cmd run-now
+          powershell -Command "Start-Sleep 60"
+          manage.cmd status
+          echo --- logs\monitor.log
+          powershell -Command "if (Test-Path logs\monitor.log) { Get-Content logs\monitor.log -Tail 8 }"
+          echo --- logs\stdout.log
+          powershell -Command "if (Test-Path logs\stdout.log) { Get-Content logs\stdout.log -Tail 8 }"
+          exit /b 0
+
+      - name: "8. manage.cmd uninstall-tasks"
+        if: always()
+        shell: cmd
+        run: |
+          manage.cmd uninstall-tasks
+          powershell -Command "$t = Get-ScheduledTask -TaskPath '\AIUsageMonitor\' -ErrorAction SilentlyContinue; if ($t) { 'VẪN CÒN tác vụ'; exit 1 } else { 'Đã gỡ sạch' }"
