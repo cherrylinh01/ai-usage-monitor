@@ -19,7 +19,7 @@ jobs:
       - name: "1. manage.cmd setup (tạo .venv, cài thư viện, tạo config.toml)"
         shell: cmd
         run: |
-          manage.cmd setup
+          call manage.cmd setup
           .venv\Scripts\python --version
           .venv\Scripts\python -c "import PIL, bleak; print('Pillow', PIL.__version__, '| bleak import OK')"
 
@@ -33,11 +33,11 @@ jobs:
 
       - name: "4. manage.cmd install-tasks (Task Scheduler)"
         shell: cmd
-        run: manage.cmd install-tasks
+        run: call manage.cmd install-tasks
 
       - name: "5. Soát tác vụ đã đăng ký + chu kỳ lặp"
         if: always()
-        shell: powershell
+        shell: pwsh
         run: |
           Get-ScheduledTask -TaskPath '\AIUsageMonitor\' | ForEach-Object {
             $i = $_ | Get-ScheduledTaskInfo
@@ -47,7 +47,7 @@ jobs:
 
       - name: "6. Server Gemini chạy nền bằng pythonw (qua Task Scheduler) có nhận dữ liệu không"
         if: always()
-        shell: powershell
+        shell: pwsh
         run: |
           Start-Sleep 15
           $key = (Select-String -Path config.toml -Pattern 'secret = "([^"]+)"').Matches[0].Groups[1].Value
@@ -63,18 +63,18 @@ jobs:
         if: always()
         shell: cmd
         run: |
-          manage.cmd run-now
-          powershell -Command "Start-Sleep 60"
-          manage.cmd status
+          call manage.cmd run-now
+          pwsh -Command "Start-Sleep 75; $i = Get-ScheduledTaskInfo -TaskPath '\AIUsageMonitor\' -TaskName 'Update display'; 'Update display: LastResult=' + $i.LastTaskResult + ' LastRun=' + $i.LastRunTime"
+          call manage.cmd status
           echo --- logs\monitor.log
-          powershell -Command "if (Test-Path logs\monitor.log) { Get-Content logs\monitor.log -Tail 8 }"
+          pwsh -Command "if (Test-Path logs\monitor.log) { Get-Content logs\monitor.log -Tail 8 }"
           echo --- logs\stdout.log
-          powershell -Command "if (Test-Path logs\stdout.log) { Get-Content logs\stdout.log -Tail 8 }"
+          pwsh -Command "if (Test-Path logs\stdout.log) { Get-Content logs\stdout.log -Tail 8 }"
           exit /b 0
 
       - name: "8. manage.cmd uninstall-tasks"
         if: always()
         shell: cmd
         run: |
-          manage.cmd uninstall-tasks
-          powershell -Command "$t = Get-ScheduledTask -TaskPath '\AIUsageMonitor\' -ErrorAction SilentlyContinue; if ($t) { 'VẪN CÒN tác vụ'; exit 1 } else { 'Đã gỡ sạch' }"
+          call manage.cmd uninstall-tasks
+          pwsh -Command "$t = Get-ScheduledTask -TaskPath '\AIUsageMonitor\' -ErrorAction SilentlyContinue; if ($t) { 'STILL PRESENT'; exit 1 } else { 'REMOVED OK' }"
