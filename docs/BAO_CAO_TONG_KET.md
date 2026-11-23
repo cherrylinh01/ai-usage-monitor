@@ -85,9 +85,10 @@ Gemini Apps dùng **giới hạn theo lượng tính toán** (cửa sổ 5 giờ
 
 | | Windows | macOS |
 |---|---|---|
-| Server Gemini | Tác vụ **`Gemini receiver`**: chạy khi đăng nhập, nền (`pythonw.exe`), tự bật lại khi chết | **Chạy tay** trong Terminal (`python gemini_receiver.py`) |
-| Cập nhật thẻ | Tác vụ **`Update display`**: 2 phút sau đăng nhập rồi mỗi 30 phút | **Chạy tay** `python main.py` |
-| Cài / gỡ | `manage.cmd install-tasks` / `uninstall-tasks` (không cần Administrator) | – |
+| Server Gemini | Tác vụ **`Gemini receiver`**: chạy khi đăng nhập, nền (`pythonw.exe`), tự bật lại khi chết | LaunchAgent **`com.aiusagemonitor.receiver`**: chạy khi đăng nhập, `KeepAlive` tự bật lại |
+| Cập nhật thẻ | Tác vụ **`Update display`**: 2 phút sau đăng nhập rồi mỗi 30 phút | LaunchAgent **`com.aiusagemonitor.update`**: khi đăng nhập + mỗi 30 phút, chạy qua app `mac/AIUsageMonitor.app` (để có quyền Bluetooth) |
+| Cài / gỡ | `manage.cmd install-tasks` / `uninstall-tasks` (không cần Administrator) | `python manage.py install-tasks` / `uninstall-tasks` |
+| Chạy ngay | `manage.cmd run-now` | `python manage.py run-now` |
 | Log | `logs\monitor.log`, `logs\receiver.log`, `logs\stdout.log` | như Windows |
 
 ---
@@ -102,8 +103,10 @@ python3 manage.py setup                     # .venv + thư viện + config.toml 
 curl -fsSL https://claude.ai/install.sh | bash   # rồi thêm ~/.local/bin vào PATH, chạy `claude` để đăng nhập
 ```
 Chrome: Tampermonkey → *Allow User Scripts* → dán `gemini_userscript.js` + khoá → mở trang Hạn mức 1 lần.
-Mỗi lần dùng: `source .venv/bin/activate` → `python gemini_receiver.py` (để mở) → `python main.py`.
-Lần đầu dùng Bluetooth: macOS hỏi quyền cho **Terminal** → *Allow*.
+Cài chạy tự động: `python manage.py install-tasks` (tắt server đang chạy tay trước).
+Lần đầu: macOS hỏi **"AIUsageMonitor" muốn dùng Bluetooth** → *Allow*. Kiểm tra/bật lại ở
+**System Settings → Privacy & Security (Quyền riêng tư & Bảo mật) → Bluetooth** – *không phải* trang Bluetooth thường.
+Chạy tay khi cần: `python main.py` (Terminal cũng cần quyền Bluetooth lần đầu).
 
 ### 3.2 Windows (máy chạy hằng ngày)
 Làm theo **[docs/HUONG_DAN_WINDOWS.md](HUONG_DAN_WINDOWS.md)** – 12 bước có kiểm tra sau mỗi bước:
@@ -175,7 +178,7 @@ Lỗi phát hiện trong quá trình kiểm thử Windows và đã sửa:
 | `claude doctor` làm mới token là **hành vi phụ** không có tài liệu | Bản Claude Code sau có thể bỏ | Khi đó cần mở Claude Code thường xuyên; thẻ báo `!` |
 | Gemini cần **tab Chrome mở** | Đóng Chrome lâu → số Gemini cũ | `chrome://settings/onStartup` mở sẵn Gemini; dấu `!` sau 2 giờ |
 | `TIER2 = Ultra` là **suy luận** | Gói lạ hiện nguyên văn (vd `TIER3`) | Bổ sung vào `TIER_NAMES` trong `gemini_receiver.py` |
-| macOS **chưa tự chạy** | Phải mở server + `main.py` tay | Dùng Windows cho chạy hằng ngày (có Task Scheduler) |
+| macOS: quyền Bluetooth gắn với app `mac/AIUsageMonitor.app` (ký ad-hoc) | Di chuyển thư mục dự án / chạy lại `install-tasks` có thể khiến macOS hỏi lại quyền | Bấm *Allow* lại; `send_ble.py` ghi rõ trạng thái quyền vào log khi không thấy thẻ |
 | Ngưỡng 5 điểm | Số trên thẻ có thể chậm ≤ 4 điểm | Đổi `CHANGE_THRESHOLD` trong `main.py` |
 
 ---
@@ -195,7 +198,8 @@ Lỗi phát hiện trong quá trình kiểm thử Windows và đã sửa:
 | `Address already in use` | Server cũ còn chạy ở cửa sổ khác | `lsof -iTCP:8765` tìm và dùng tiếp / tắt |
 | Lớp đỏ sai màu (dự đoán) | Firmware dùng bit 0 = đỏ, lưu theo cột | Đọc code trang shop, so khớp từng byte |
 | Thẻ refresh thừa | Giờ reset API rung quanh mốc phút | Làm tròn phút |
-| Số Gemini không cập nhật | Server Gemini trên Mac không chạy | Bật lại server; `manage.py status` chỉ ra ngay |
+| Số Gemini không cập nhật | Server Gemini trên Mac không chạy | Bật lại server; `manage.py status` chỉ ra ngay → sau đó thêm launchd cho Mac |
+| Chạy nền trên Mac: tiến trình bị dừng / không thấy thẻ | Python Homebrew không khai báo `NSBluetoothAlwaysUsageDescription` (TCC) | Bọc `main.py` trong `AIUsageMonitor.app` có khai báo, cấp quyền 1 lần |
 
 ---
 
@@ -206,6 +210,24 @@ Lỗi phát hiện trong quá trình kiểm thử Windows và đã sửa:
 | Kiểm tra tổng thể | `python manage.py status` | nhấp đúp `manage.cmd` |
 | Kiểm thử tự động | `python tests/smoke_test.py` | `.venv\Scripts\python tests\smoke_test.py` |
 | Quét thẻ | `python send_ble.py --scan` | `.venv\Scripts\python send_ble.py --scan` |
-| Gửi ngay | `python main.py --force` | `.\manage.cmd run-now` |
+| Gửi ngay | `python manage.py run-now` (hoặc `python main.py --force`) | `.\manage.cmd run-now` |
+| Cài / gỡ chạy tự động | `python manage.py install-tasks` / `uninstall-tasks` | `.\manage.cmd install-tasks` / `uninstall-tasks` |
 | Xem log | `tail logs/monitor.log` | `Get-Content logs\monitor.log -Tail 20` |
 | Kiểm thử trên Windows thật (GitHub) | `gh workflow run windows-test.yml` | – |
+
+---
+
+## 8. Kiểm thử trên Windows bằng GitHub Actions (bấm tay)
+
+Đây là **máy ảo Windows trên cloud của GitHub**, dùng để kiểm tra code sau khi sửa – **không phải** máy Windows
+chạy thẻ của bạn (máy đó tự chạy nhờ Task Scheduler sau `manage.cmd install-tasks`).
+Để **bấm tay** vì repo private có 2.000 phút Actions miễn phí/tháng, máy Windows tính ×2 (~10 phút mỗi lần chạy).
+
+**Trên web:** repo → tab **Actions** → cột trái **Windows test** → nút **Run workflow** → branch `main` →
+**Run workflow** (xanh) → bấm vào lần chạy để xem từng bước (✅ = đạt; bấm vào bước để đọc log).
+
+**Bằng Terminal:**
+```bash
+gh workflow run windows-test.yml
+gh run watch
+```

@@ -58,8 +58,10 @@ không ghi nhầm mẫu request của tài khoản khác.
 | Chạy 1 vòng (không gửi BLE) | `python main.py --no-ble` |
 | Xem trước ảnh | mở `preview.png` |
 | Đổi khoá bí mật Gemini | `python manage.py new-key` |
-| [Windows] Cài / gỡ chạy tự động | `manage.cmd install-tasks` / `manage.cmd uninstall-tasks` |
-| [Windows] Cập nhật ngay | `manage.cmd run-now` |
+| Cài / gỡ chạy tự động (Windows: Task Scheduler · macOS: launchd) | `python manage.py install-tasks` / `uninstall-tasks` |
+| Cập nhật thẻ ngay | `python manage.py run-now` |
+| Kiểm thử tự động | `python tests/smoke_test.py` |
+| Kiểm thử trên máy Windows của GitHub (bấm tay) | tab **Actions → Windows test → Run workflow**, hoặc `gh workflow run windows-test.yml` |
 
 (Trên Windows thay `python` bằng `.venv\Scripts\python`, hoặc dùng `manage.cmd <lệnh>`.)
 

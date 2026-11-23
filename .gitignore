@@ -12,3 +12,6 @@ out/
 # Ảnh sinh ra khi chạy
 preview*.png
 font_test*.png
+
+# App bọc main.py trên macOS (tạo bởi manage.py install-tasks)
+mac/

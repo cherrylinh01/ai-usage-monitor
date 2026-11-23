@@ -47,6 +47,24 @@ def norm(name: str | None) -> str:
     return re.sub(r"[_\s]+", " ", name or "").strip().upper()
 
 
+def bluetooth_permission_hint() -> str:
+    """macOS: đọc trạng thái quyền Bluetooth của CHƯƠNG TRÌNH ĐANG CHẠY (Terminal hoặc AIUsageMonitor.app)."""
+    if sys.platform != "darwin":
+        return ""
+    try:
+        from CoreBluetooth import CBManager   # có sẵn vì bleak trên macOS cài kèm pyobjc
+        state = int(CBManager.authorization())
+    except Exception:  # noqa: BLE001
+        return ""
+    meaning = {0: "CHƯA HỎI (macOS chưa hiện hộp thoại xin quyền)", 1: "BỊ HẠN CHẾ",
+               2: "BỊ TỪ CHỐI", 3: "đã cho phép"}
+    hint = f" Quyền Bluetooth của macOS: {meaning.get(state, state)}."
+    if state != 3:
+        hint += (" -> System Settings > Privacy & Security (Quyền riêng tư & Bảo mật) > Bluetooth:"
+                 " bật AIUsageMonitor / Terminal.")
+    return hint
+
+
 async def find_device(timeout: float = 10.0):
     """Quét theo TÊN (không gán cứng MAC/UUID) -> chạy được trên cả macOS lẫn Windows."""
     cfg = ble_config()
@@ -61,6 +79,8 @@ async def find_device(timeout: float = 10.0):
         if norm(name).startswith(prefix):
             matches.append((adv.rssi, dev, name))
     if not matches:
+        log.warning("Quét %.0f giây: thấy %d thiết bị Bluetooth, không cái nào là thẻ NRF_EPD.%s",
+                    timeout, len(found), bluetooth_permission_hint())
         return None, None, None
     rssi, dev, name = max(matches, key=lambda m: m[0])   # nhiều thẻ -> chọn thẻ gần nhất (sóng mạnh nhất)
     return dev, name, rssi

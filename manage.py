@@ -4,12 +4,14 @@
   python manage.py status                   kiểm tra từng thành phần có hoạt động không
   python manage.py switch-account [claude|gemini|all]   đổi tài khoản
   python manage.py new-key                  tạo khoá bí mật mới cho server Gemini
-  manage.cmd install-tasks | uninstall-tasks | run-now     [chỉ Windows] Task Scheduler
+  python manage.py install-tasks | uninstall-tasks | run-now   chạy tự động (Windows: Task Scheduler, macOS: launchd)
 
 Lệnh 'setup' chỉ dùng thư viện chuẩn -> chạy được bằng Python hệ thống trước khi có .venv.
 """
 import argparse
+import os
 import platform
+import re
 import secrets
 import socket
 import subprocess
@@ -21,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 IS_WIN = platform.system() == "Windows"
+IS_MAC = platform.system() == "Darwin"
 VENV_DIR = ROOT / ".venv"
 VENV_PY = VENV_DIR / ("Scripts/python.exe" if IS_WIN else "bin/python")
 CONFIG = ROOT / "config.toml"
@@ -164,6 +167,13 @@ def cmd_status(_args) -> None:
             check(False, "Chưa cài tác vụ tự động", "manage.cmd install-tasks")
         for ok, msg in tasks:
             check(ok, msg, "xem logs\\monitor.log hoặc logs\\receiver.log")
+    elif IS_MAC:
+        print("\nlaunchd (chạy tự động)")
+        tasks = mac_task_lines()
+        if not tasks:
+            check(False, "Chưa cài chạy tự động", "python manage.py install-tasks")
+        for ok, msg in tasks:
+            check(ok, msg, "xem logs/monitor.log, logs/receiver.log")
 
     log = ROOT / "logs" / "monitor.log"
     if log.exists():
@@ -202,8 +212,7 @@ def require_windows() -> None:
         sys.exit("Lệnh này chỉ dành cho Windows (Task Scheduler).")
 
 
-def cmd_install_tasks(_args) -> None:
-    require_windows()
+def _win_install_tasks() -> None:
     pythonw = VENV_DIR / "Scripts" / "pythonw.exe"
     if not pythonw.exists():
         sys.exit("Chưa có .venv – chạy: manage.cmd setup")
@@ -253,16 +262,14 @@ Write-Output 'INSTALLED'
     print("Cả hai vừa được chạy thử. Đợi ~20 giây rồi kiểm tra: manage.cmd status")
 
 
-def cmd_uninstall_tasks(_args) -> None:
-    require_windows()
+def _win_uninstall_tasks() -> None:
     r = run_ps(f"Get-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -ErrorAction SilentlyContinue | "
                "ForEach-Object { Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; $_ } | "
                "Unregister-ScheduledTask -Confirm:$false; Write-Output 'REMOVED'")
     print("Đã gỡ các tác vụ AIUsageMonitor." if "REMOVED" in r.stdout else r.stderr)
 
 
-def cmd_run_now(_args) -> None:
-    require_windows()
+def _win_run_now() -> None:
     r = run_ps(f"Start-ScheduledTask -TaskPath {ps_quote(TASK_PATH)} -TaskName {ps_quote(TASK_UPDATE)}; "
                "Write-Output 'STARTED'")
     print("Đã chạy tác vụ cập nhật. Xem kết quả: logs\\monitor.log" if "STARTED" in r.stdout else r.stderr)
@@ -283,6 +290,150 @@ def windows_task_lines() -> list[tuple[bool, str]]:
 
 
 # ---------------- switch-account ----------------
+# ---------------- macOS launchd ----------------
+# launchd = trình hẹn giờ/khởi chạy nền có sẵn của macOS (tương đương Task Scheduler).
+# "LaunchAgent" chạy trong phiên đăng nhập của bạn -> đọc được Keychain, dùng được Bluetooth.
+MAC_LABEL_SERVER = "com.aiusagemonitor.receiver"
+MAC_LABEL_UPDATE = "com.aiusagemonitor.update"
+MAC_AGENTS = Path.home() / "Library" / "LaunchAgents"
+# macOS chỉ cho dùng Bluetooth khi chương trình KHAI BÁO lý do (NSBluetoothAlwaysUsageDescription).
+# Python của Homebrew không khai báo -> bị dừng ngay khi quét. Ta bọc main.py trong 1 app nhỏ có khai báo;
+# macOS sẽ hỏi quyền Bluetooth cho app này đúng 1 lần.
+MAC_APP = ROOT / "mac" / "AIUsageMonitor.app"
+
+
+def _plist(label: str, program: list[str], extra: str) -> str:
+    from xml.sax.saxutils import escape
+    args = "".join(f"\n        <string>{escape(a)}</string>" for a in program)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>{args}
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{escape(str(ROOT))}</string>
+    <key>RunAtLoad</key>
+    <true/>{extra}
+</dict>
+</plist>
+"""
+
+
+def _mac_build_app() -> None:
+    """Tạo mac/AIUsageMonitor.app: chạy .venv/bin/python main.py, có khai báo quyền Bluetooth."""
+    from xml.sax.saxutils import escape
+    macos = MAC_APP / "Contents" / "MacOS"
+    macos.mkdir(parents=True, exist_ok=True)
+    (MAC_APP / "Contents" / "Info.plist").write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.aiusagemonitor.app</string>
+    <key>CFBundleName</key><string>AIUsageMonitor</string>
+    <key>CFBundleExecutable</key><string>run</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSUIElement</key><true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>{escape("Gửi ảnh hạn mức Claude/Gemini lên thẻ E-ink qua Bluetooth.")}</string>
+</dict>
+</plist>
+""", encoding="utf-8")
+    run = macos / "run"
+    run.write_text(f'#!/bin/bash\ncd "{ROOT}"\nexec "{VENV_PY}" main.py "$@"\n', encoding="utf-8")
+    run.chmod(0o755)
+    # Ký "ad-hoc" (không cần tài khoản Apple Developer) để macOS nhớ quyền đã cấp
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(MAC_APP)], capture_output=True)
+
+
+def _launchctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["launchctl", *args], capture_output=True, text=True)
+
+
+def _mac_install_tasks() -> None:
+    if not VENV_PY.exists():
+        sys.exit("Chưa có .venv – chạy: python3 manage.py setup")
+    port = load_config()["gemini"].get("port", 8765)
+    if port_open(port):
+        sys.exit(f"Cổng {port} đang bận: hãy TẮT server gemini_receiver.py đang chạy tay (Ctrl+C) rồi chạy lại "
+                 "lệnh này – launchd sẽ thay nó chạy nền.")
+    (ROOT / "logs").mkdir(exist_ok=True)
+    _mac_build_app()
+    MAC_AGENTS.mkdir(parents=True, exist_ok=True)
+    log = lambda name: f"\n    <key>StandardOutPath</key>\n    <string>{ROOT / 'logs' / name}</string>" \
+                       f"\n    <key>StandardErrorPath</key>\n    <string>{ROOT / 'logs' / name}</string>"
+    agents = {
+        # Server: chạy khi đăng nhập, chết thì launchd tự bật lại (KeepAlive)
+        MAC_LABEL_SERVER: _plist(MAC_LABEL_SERVER, [str(VENV_PY), "gemini_receiver.py"],
+                                 "\n    <key>KeepAlive</key>\n    <true/>" + log("receiver.log")),
+        # Cập nhật: khi đăng nhập + mỗi 30 phút. 'open -W' chạy app (để có quyền Bluetooth) và chờ xong
+        MAC_LABEL_UPDATE: _plist(MAC_LABEL_UPDATE, ["/usr/bin/open", "-W", "-g", "-a", str(MAC_APP)],
+                                 f"\n    <key>StartInterval</key>\n    <integer>{UPDATE_EVERY_MIN * 60}</integer>"
+                                 + log("launchd-update.log")),
+    }
+    uid = str(os.getuid())
+    for label, xml in agents.items():
+        path = MAC_AGENTS / f"{label}.plist"
+        _launchctl("bootout", f"gui/{uid}/{label}")            # gỡ bản cũ (nếu có) để nạp cấu hình mới
+        path.write_text(xml, encoding="utf-8")
+        r = _launchctl("bootstrap", f"gui/{uid}", str(path))
+        if r.returncode != 0:
+            sys.exit(f"launchctl bootstrap {label} lỗi: {r.stderr.strip()}")
+    print("Đã cài 2 LaunchAgent (~/Library/LaunchAgents):")
+    print(f"  - {MAC_LABEL_SERVER}: server Gemini chạy nền, tự bật lại (log: logs/receiver.log)")
+    print(f"  - {MAC_LABEL_UPDATE}: khi đăng nhập + mỗi {UPDATE_EVERY_MIN} phút (log: logs/monitor.log)")
+    print("LẦN ĐẦU: macOS sẽ hỏi 'AIUsageMonitor muốn dùng Bluetooth' -> bấm Allow (Cho phép).")
+    print("Đợi ~1 phút rồi kiểm tra: python manage.py status")
+
+
+def _mac_uninstall_tasks() -> None:
+    uid = str(os.getuid())
+    for label in (MAC_LABEL_SERVER, MAC_LABEL_UPDATE):
+        _launchctl("bootout", f"gui/{uid}/{label}")
+        (MAC_AGENTS / f"{label}.plist").unlink(missing_ok=True)
+    print("Đã gỡ các LaunchAgent của AI Usage Monitor.")
+
+
+def _mac_run_now() -> None:
+    r = _launchctl("kickstart", f"gui/{os.getuid()}/{MAC_LABEL_UPDATE}")
+    print("Đã chạy cập nhật. Xem kết quả: logs/monitor.log" if r.returncode == 0
+          else f"Chưa cài chạy tự động? ({r.stderr.strip()}) -> python manage.py install-tasks")
+
+
+def mac_task_lines() -> list[tuple[bool, str]]:
+    out = []
+    for label, name in ((MAC_LABEL_SERVER, "Server Gemini"), (MAC_LABEL_UPDATE, "Cập nhật thẻ")):
+        r = _launchctl("print", f"gui/{os.getuid()}/{label}")
+        if r.returncode != 0:
+            continue
+        state = re.search(r"^\s*state = (\S+)", r.stdout, re.M)
+        code = re.search(r"last exit code = (.+)$", r.stdout, re.M)
+        code = code.group(1).strip() if code else ""
+        state = state.group(1) if state else "?"
+        if not code or code.startswith("(never"):
+            code = "chưa kết thúc lần nào"
+        ok = state == "running" or code in ("0", "chưa kết thúc lần nào")
+        out.append((ok, f"{name} ({label}): {state}, mã thoát lần cuối: {code}"))
+    return out
+
+
+# ---------------- chọn theo hệ điều hành ----------------
+def cmd_install_tasks(_args) -> None:
+    _win_install_tasks() if IS_WIN else _mac_install_tasks() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+
+
+def cmd_uninstall_tasks(_args) -> None:
+    _win_uninstall_tasks() if IS_WIN else _mac_uninstall_tasks() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+
+
+def cmd_run_now(_args) -> None:
+    _win_run_now() if IS_WIN else _mac_run_now() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+
+
 def cmd_switch(args) -> None:
     which = args.which
     if which in ("claude", "all"):
@@ -315,9 +466,9 @@ def main() -> None:
     sub.add_parser("setup", help="cài lần đầu").set_defaults(func=cmd_setup)
     sub.add_parser("status", help="kiểm tra tổng thể").set_defaults(func=cmd_status)
     sub.add_parser("new-key", help="tạo khoá bí mật mới").set_defaults(func=cmd_new_key)
-    sub.add_parser("install-tasks", help="[Windows] cài 2 tác vụ chạy tự động").set_defaults(func=cmd_install_tasks)
-    sub.add_parser("uninstall-tasks", help="[Windows] gỡ các tác vụ tự động").set_defaults(func=cmd_uninstall_tasks)
-    sub.add_parser("run-now", help="[Windows] chạy tác vụ cập nhật ngay").set_defaults(func=cmd_run_now)
+    sub.add_parser("install-tasks", help="cài chạy tự động (Windows: Task Scheduler, macOS: launchd)").set_defaults(func=cmd_install_tasks)
+    sub.add_parser("uninstall-tasks", help="gỡ chạy tự động").set_defaults(func=cmd_uninstall_tasks)
+    sub.add_parser("run-now", help="chạy cập nhật ngay").set_defaults(func=cmd_run_now)
     sw = sub.add_parser("switch-account", help="đổi tài khoản")
     sw.add_argument("which", nargs="?", choices=["claude", "gemini", "all"], default="all")
     sw.set_defaults(func=cmd_switch)
