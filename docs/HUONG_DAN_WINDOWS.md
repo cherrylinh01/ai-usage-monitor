@@ -247,9 +247,30 @@ Trên máy cũ (nếu không dùng nữa): `.\manage.cmd uninstall-tasks`.
 
 ---
 
-## 12. Gửi ảnh lên thẻ E-ink (khi có thẻ)
+## 12. Gửi ảnh lên thẻ E-ink qua Bluetooth
 
-Phần gửi Bluetooth (`send_ble.py`) sẽ được thêm sau khi có thẻ để kiểm tra giao thức. Khi đó chỉ cần
-`git pull` – các tác vụ ở bước 7 tự dùng code mới. Lưu ý trước:
-- Bật Bluetooth của Windows, **không Pair** thẻ trong Settings (chương trình tự tìm thẻ theo tên `NRF EPD`).
-- Thẻ chỉ nhận 1 kết nối một lúc – đóng các trang Web Bluetooth đang kết nối tới thẻ.
+Tác vụ `Update display` (bước 7) tự gửi ảnh lên thẻ **mỗi khi số liệu thay đổi** (ảnh giống lần trước thì
+bỏ qua để tiết kiệm pin). Chuẩn bị:
+
+- Bật Bluetooth của Windows (Settings → Bluetooth & devices). **Không Pair/Add device** thẻ trong Settings –
+  chương trình tự tìm thẻ theo tên `NRF_EPD…`.
+- Thẻ chỉ nhận **1 kết nối một lúc**: đóng trang web điều khiển của shop (hoặc bấm ngắt kết nối) trước.
+- Đặt thẻ trong tầm ~2–5 m, không bị vật kim loại che.
+
+✅ **Kiểm tra**:
+```powershell
+.venv\Scripts\python send_ble.py --scan
+```
+Phải thấy dòng có `NRF_EPD_xxxx  <== thẻ E-ink`. Sau đó gửi thử (bỏ qua kiểm tra "ảnh không đổi"):
+```powershell
+.venv\Scripts\python main.py --force
+```
+Log in ra `Thẻ sẵn sàng – gửi lớp đen + đỏ…` → `Đã ra lệnh refresh…` → `Đã gửi ảnh lên thẻ`;
+khoảng 20–30 giây sau màn hình thẻ nháy và hiện ảnh mới.
+
+| Hiện tượng | Cách sửa |
+|---|---|
+| `Không tìm thấy thẻ` | Bluetooth tắt / thẻ xa / trang web shop vẫn đang kết nối (đóng tab rồi thử lại) |
+| `Thẻ không trả lời INIT` | Rút pin thẻ ~5 giây rồi lắp lại; thử lại |
+| Có nhiều thẻ, gửi nhầm thẻ | Thêm vào `config.toml`: `[ble]` rồi dòng `name_prefix = "NRF_EPD_5119"` (đúng tên thẻ của bạn) |
+| Muốn trả thẻ về chế độ lịch | Kết nối bằng trang web shop → bấm **Lịch tháng** (rồi `.\manage.cmd uninstall-tasks` nếu không dùng nữa) |

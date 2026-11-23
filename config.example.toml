@@ -4,3 +4,8 @@
 [gemini]
 secret = "DAN-KHOA-BI-MAT-CUA-BAN-VAO-DAY"   # tạo bằng: python -c "import secrets; print(secrets.token_hex(16))"
 port = 8765
+
+[ble]
+# Không bắt buộc. Mặc định tự tìm thẻ có tên bắt đầu bằng "NRF_EPD" / "NRF EPD" (gần nhất).
+# name_prefix = "NRF_EPD_5119"   # chỉ định đúng 1 thẻ nếu nhà có nhiều thẻ
+# address = ""                   # hoặc địa chỉ cố định (Windows: MAC; macOS: UUID riêng của máy)

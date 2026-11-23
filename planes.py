@@ -6,10 +6,12 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "out"
 
-# ---------- Cấu hình phụ thuộc PHẦN CỨNG – sẽ chỉnh ở Giai đoạn 4 khi có thẻ ----------
-ROTATE = 0            # 0, 90 hoặc 270: nếu firmware muốn ảnh dọc 128x296 thì xoay
-BLACK_BIT_IS_1 = False  # lớp đen: nhiều chip (vd SSD1680) dùng bit 0 = ĐEN, 1 = trắng
-RED_BIT_IS_1 = True     # lớp đỏ: thường bit 1 = ĐỎ, 0 = không đỏ
+# ---------- Cấu hình phụ thuộc PHẦN CỨNG – đã kiểm chứng với thẻ AESL029FC (nRF52810) ----------
+# Firmware 2.9" lưu ảnh THEO CỘT, bắt đầu từ cột bên phải; tương đương xoay 90° (ngược chiều kim
+# đồng hồ) rồi đọc theo hàng. Đã so khớp từng byte với hàm canvas2bytes_bw của trang web shop.
+ROTATE = 90
+BLACK_BIT_IS_1 = False  # lớp đen: bit 0 = ĐEN, 1 = trắng/đỏ
+RED_BIT_IS_1 = False    # lớp đỏ: bit 0 = ĐỎ, 1 = không đỏ (firmware này đảo so với thông lệ)
 
 
 def split_planes(img: Image.Image) -> tuple[Image.Image, Image.Image]:

@@ -95,6 +95,10 @@ def effective(block: dict | None) -> tuple[int | None, datetime | None]:
     block = block or {}
     pct, reset = block.get("percent"), block.get("resets_at")
     reset_dt = datetime.fromisoformat(reset).astimezone() if reset else None
+    if reset_dt:
+        # API trả giờ reset "rung" quanh mốc phút (04:59:59.6 lúc này, 05:00:00.2 lúc khác).
+        # Làm tròn về phút gần nhất để ảnh không đổi vô cớ -> không refresh thẻ thừa (tốn pin).
+        reset_dt = (reset_dt + timedelta(seconds=30)).replace(second=0, microsecond=0)
     if reset_dt and reset_dt <= datetime.now().astimezone():
         return 0, None
     return pct, reset_dt
