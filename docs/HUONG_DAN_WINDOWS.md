@@ -249,8 +249,9 @@ Trên máy cũ (nếu không dùng nữa): `.\manage.cmd uninstall-tasks`.
 
 ## 12. Gửi ảnh lên thẻ E-ink qua Bluetooth
 
-Tác vụ `Update display` (bước 7) tự gửi ảnh lên thẻ **mỗi khi số liệu thay đổi** (ảnh giống lần trước thì
-bỏ qua để tiết kiệm pin). Chuẩn bị:
+Tác vụ `Update display` (bước 7) chỉ gửi ảnh lên thẻ khi có **thay đổi đáng kể** so với ảnh đang hiển thị:
+% đổi **từ 5 điểm** trở lên, vượt **ngưỡng đỏ 80%**, **giờ reset** đổi, hoặc dấu **`!`** (dữ liệu cũ) bật/tắt.
+Thay đổi nhỏ hơn thì bỏ qua để tiết kiệm pin (đổi ngưỡng: `CHANGE_THRESHOLD` trong `main.py`). Chuẩn bị:
 
 - Bật Bluetooth của Windows (Settings → Bluetooth & devices). **Không Pair/Add device** thẻ trong Settings –
   chương trình tự tìm thẻ theo tên `NRF_EPD…`.

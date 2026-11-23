@@ -26,7 +26,7 @@ VENV_PY = VENV_DIR / ("Scripts/python.exe" if IS_WIN else "bin/python")
 CONFIG = ROOT / "config.toml"
 EXAMPLE = ROOT / "config.example.toml"
 CACHE_DIR = ROOT / "cache"
-LAST_SENT = ROOT / "out" / "last_sent.sha256"
+LAST_SENT = ROOT / "out" / "last_sent.json"
 PLACEHOLDER = "DAN-KHOA-BI-MAT-CUA-BAN-VAO-DAY"
 
 # Console Windows đôi khi không phải UTF-8 -> tránh lỗi khi in tiếng Việt

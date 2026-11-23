@@ -1,20 +1,23 @@
-"""Chạy 1 vòng: lấy dữ liệu -> vẽ -> tách lớp -> gửi BLE (chỉ khi ảnh thay đổi).
+"""Chạy 1 vòng: lấy dữ liệu -> vẽ -> tách lớp -> gửi BLE (chỉ khi thay đổi ĐÁNG KỂ).
 
 Task Scheduler (Windows) gọi file này định kỳ bằng pythonw.exe (không có cửa sổ).
 Cờ dòng lệnh:
-  --force    gửi lên thẻ kể cả khi ảnh không đổi
+  --force    gửi lên thẻ kể cả khi không có thay đổi đáng kể
   --no-ble   chỉ vẽ + tách lớp, không gửi (dùng khi chưa có thẻ)
 """
 import hashlib
+import json
 import logging
 import sys
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 LOG_DIR = ROOT / "logs"
 OUT_DIR = ROOT / "out"
-LAST_SENT = OUT_DIR / "last_sent.sha256"   # "dấu vân tay" của ảnh đã gửi lần trước
+LAST_SENT = OUT_DIR / "last_sent.json"   # những gì ĐANG hiển thị trên thẻ (lần gửi thành công gần nhất)
+CHANGE_THRESHOLD = 5                     # % đổi ít nhất bao nhiêu điểm so với lần gửi trước mới refresh
 
 LOG_DIR.mkdir(exist_ok=True)
 OUT_DIR.mkdir(exist_ok=True)
@@ -40,6 +43,54 @@ def summary(data: dict | None) -> str:
     return f"{data.get('plan')} 5H {s.get('percent')}% 7D {w.get('percent')}%{stale}"
 
 
+def display_state(claude: dict | None, gemini: dict | None) -> dict:
+    """Những gì thẻ SẼ hiển thị (sau khi render xử lý: cửa sổ đã reset -> 0%, giờ làm tròn phút...)."""
+    import render
+    state = {}
+    for name, data in (("claude", claude), ("gemini", gemini)):
+        data = data or {}
+        state[name] = {"plan": data.get("plan"), "stale": render.is_stale(data)}
+        for key in ("session", "weekly"):
+            pct, reset = render.effective(data.get(key))
+            state[name][key] = {"percent": pct, "reset": reset.strftime("%H:%M %d/%m") if reset else None}
+    return state
+
+
+def change_reason(prev: dict | None, now: dict) -> str | None:
+    """Lý do cần refresh thẻ, hoặc None nếu thay đổi quá nhỏ.
+    So với lần GỬI gần nhất (không phải lần chạy gần nhất) -> tăng dần 1-2% mỗi lần vẫn được cộng dồn."""
+    import render
+    if not prev:
+        return "chưa có ảnh nào trên thẻ"
+    for name, n in now.items():
+        p = prev.get(name) or {}
+        if p.get("plan") != n["plan"]:
+            return f"{name}: đổi gói {p.get('plan')} -> {n['plan']}"
+        if p.get("stale") != n["stale"]:
+            return f"{name}: dữ liệu {'thành cũ' if n['stale'] else 'mới trở lại'} (dấu !)"
+        for key, label in (("session", "5H"), ("weekly", "7D")):
+            a, b = p.get(key) or {}, n[key]
+            if a.get("reset") != b["reset"]:
+                return f"{name} {label}: giờ reset {a.get('reset')} -> {b['reset']}"
+            pa, pb = a.get("percent"), b["percent"]
+            if (pa is None) != (pb is None):
+                return f"{name} {label}: {pa}% -> {pb}%"
+            if pb is None:
+                continue
+            if (pa >= render.RED_THRESHOLD) != (pb >= render.RED_THRESHOLD):
+                return f"{name} {label}: {pa}% -> {pb}% (qua ngưỡng đỏ {render.RED_THRESHOLD}%)"
+            if abs(pb - pa) >= CHANGE_THRESHOLD:
+                return f"{name} {label}: {pa}% -> {pb}%"
+    return None
+
+
+def load_last_sent() -> dict:
+    try:
+        return json.loads(LAST_SENT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def run(force: bool, use_ble: bool) -> int:
     # Import bên trong hàm để lỗi import (thiếu thư viện, thiếu font...) cũng được ghi vào log
     import planes
@@ -58,11 +109,21 @@ def run(force: bool, use_ble: bool) -> int:
     (OUT_DIR / "black.bin").write_bytes(black_bytes)
     (OUT_DIR / "red.bin").write_bytes(red_bytes)
 
-    # Màn E-ink 3 màu tốn pin nhất lúc refresh -> ảnh giống lần trước thì KHÔNG gửi.
+    # Màn E-ink 3 màu tốn pin nhất lúc refresh -> chỉ gửi khi thay đổi ĐÁNG KỂ so với ảnh đang trên thẻ.
     digest = hashlib.sha256(black_bytes + red_bytes).hexdigest()
-    if not force and LAST_SENT.exists() and LAST_SENT.read_text().strip() == digest:
+    state = display_state(claude, gemini)
+    last = load_last_sent()
+    if force:
+        reason = "--force"
+    elif last.get("digest") == digest:
         log.info("Ảnh không đổi so với lần gửi trước -> bỏ qua (tiết kiệm pin)")
         return 0
+    else:
+        reason = change_reason(last.get("state"), state)
+        if reason is None:
+            log.info("Thay đổi nhỏ (< %d điểm %%) -> bỏ qua, thẻ vẫn giữ ảnh cũ", CHANGE_THRESHOLD)
+            return 0
+    log.info("Cần cập nhật thẻ: %s", reason)
     if not use_ble:
         log.info("--no-ble: đã vẽ xong, không gửi")
         return 0
@@ -74,7 +135,9 @@ def run(force: bool, use_ble: bool) -> int:
         return 0
 
     if send_ble.send(black_bytes, red_bytes):
-        LAST_SENT.write_text(digest)
+        LAST_SENT.write_text(json.dumps({"digest": digest, "state": state,
+                                         "sent_at": datetime.now().isoformat(timespec="seconds")},
+                                        ensure_ascii=False, indent=2), encoding="utf-8")
         log.info("Đã gửi ảnh lên thẻ")
         return 0
     log.warning("Gửi BLE thất bại – sẽ thử lại ở lần chạy sau")
