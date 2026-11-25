@@ -281,3 +281,10 @@ chạy thẻ của bạn (máy đó tự chạy nhờ Task Scheduler sau `manage
 gh workflow run windows-test.yml
 gh run watch
 ```
+
+## 10. Linux (bổ sung 25/11/2026)
+
+- Chạy tự động bằng **systemd người dùng**: `aiusagemonitor-receiver.service` (server Gemini, `Restart=always`) và `aiusagemonitor-update.timer` (sau 1 phút, rồi mỗi 30 phút). Cài bằng `python3 manage.py install-tasks`. Hướng dẫn đầy đủ: [HUONG_DAN_LINUX.md](HUONG_DAN_LINUX.md).
+- Đăng nhập Claude đọc từ `~/.claude/.credentials.json`; Bluetooth dùng BlueZ qua bleak, quét theo tên `NRF_EPD` như macOS/Windows.
+- **Kiểm thử trên Ubuntu thật của GitHub (workflow "Linux test", 7/7 bước):** setup, smoke test 16/16, `send_ble` lỗi êm khi không có Bluetooth, unit systemd được cài và bật, server nhận dữ liệu Gemini (HTTP 200), `run-now`, gỡ cài đặt sạch.
+- **Chưa kiểm được:** đăng nhập Claude thật, Chrome/Gemini và Bluetooth thật trên Linux (máy CI không có), cũng như hành vi sau khi khởi động lại máy.
