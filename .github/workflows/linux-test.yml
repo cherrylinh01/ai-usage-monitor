@@ -1,0 +1,65 @@
+# Kiểm thử trên một máy Linux (Ubuntu) THẬT của GitHub (không cần thẻ, không cần đăng nhập).
+# Chỉ chạy khi bấm tay (Actions > Linux test > Run workflow) hoặc: gh workflow run linux-test.yml
+name: Linux test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: "1. manage.py setup (tạo .venv, cài thư viện, tạo config.toml)"
+        run: |
+          python3 manage.py setup
+          .venv/bin/python --version
+          .venv/bin/python -c "import PIL, bleak; print('Pillow', PIL.__version__, '| bleak import OK')"
+
+      - name: "2. Kiểm thử tự động (smoke test)"
+        run: .venv/bin/python tests/smoke_test.py
+
+      - name: "3. send_ble: máy không có Bluetooth -> phải báo lỗi êm, không crash"
+        run: .venv/bin/python -c "import send_ble, logging; logging.basicConfig(level=logging.INFO); ok = send_ble.send(bytes(4736), bytes(4736), refresh_wait=0); print('send() trả về', ok); assert ok is False"
+
+      - name: "4. Bật systemd người dùng + manage.py install-tasks"
+        run: |
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for i in $(seq 1 20); do systemctl --user is-system-running >/dev/null 2>&1 && break; sleep 1; done
+          systemctl --user is-system-running || true
+          python3 manage.py install-tasks
+
+      - name: "5. Soát unit đã đăng ký + server Gemini nhận dữ liệu"
+        if: always()
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          systemctl --user list-timers --all | grep aiusagemonitor || true
+          systemctl --user status aiusagemonitor-receiver.service --no-pager || true
+          sleep 5
+          KEY=$(grep -oP 'secret = "\K[^"]+' config.toml)
+          BODY='{"tier":"TIER1","windows":[{"poolType":"GXU_FIVE_HOURLY","percentageUsed":0.2,"windowRefreshesAt":"2030-01-01T00:00:00Z"},{"poolType":"GXU_WEEKLY","percentageUsed":0.1,"windowRefreshesAt":"2030-01-05T00:00:00Z"}]}'
+          curl -sS -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:8765/gemini -H "X-Monitor-Key: $KEY" -H 'Content-Type: application/json' -d "$BODY"
+          cat cache/gemini.json
+
+      - name: "6. manage.py run-now + status + log"
+        if: always()
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          python3 manage.py run-now
+          sleep 20
+          python3 manage.py status || true
+          echo "--- logs/monitor.log"; tail -n 8 logs/monitor.log || true
+
+      - name: "7. manage.py uninstall-tasks"
+        if: always()
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          python3 manage.py uninstall-tasks
+          ls ~/.config/systemd/user/aiusagemonitor-* 2>/dev/null && { echo "STILL PRESENT"; exit 1; } || echo "REMOVED OK"

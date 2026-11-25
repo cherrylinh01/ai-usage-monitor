@@ -18,6 +18,8 @@ Gemini (Chrome + userscript) ──►        │   (ảnh 3 màu)  (lớp đen/
 
 > 📋 **Báo cáo tổng kết (kiến trúc, chi tiết kết nối, kết quả kiểm thử): [docs/BAO_CAO_TONG_KET.md](docs/BAO_CAO_TONG_KET.md)**
 >
+> 🐧 **Linux: làm theo [docs/HUONG_DAN_LINUX.md](docs/HUONG_DAN_LINUX.md)** (systemd người dùng, BlueZ, xử lý sự cố).
+>
 > 🪟 **Windows: làm theo hướng dẫn từng bước [docs/HUONG_DAN_WINDOWS.md](docs/HUONG_DAN_WINDOWS.md)**
 > (cài công cụ, clone, đăng nhập Claude/Gemini, chạy tự động bằng Task Scheduler, xử lý sự cố).
 
@@ -58,12 +60,12 @@ không ghi nhầm mẫu request của tài khoản khác.
 | Chạy 1 vòng (không gửi BLE) | `python main.py --no-ble` |
 | Xem trước ảnh | mở `preview.png` |
 | Đổi khoá bí mật Gemini | `python manage.py new-key` |
-| Cài / gỡ chạy tự động (Windows: Task Scheduler · macOS: launchd) | `python manage.py install-tasks` / `uninstall-tasks` |
+| Cài / gỡ chạy tự động (Windows: Task Scheduler · macOS: launchd · Linux: systemd) | `python manage.py install-tasks` / `uninstall-tasks` |
 | Cập nhật thẻ ngay | `python manage.py run-now` |
 | Kiểm thử tự động | `python tests/smoke_test.py` |
-| Kiểm thử trên máy Windows của GitHub (bấm tay) | tab **Actions → Windows test → Run workflow**, hoặc `gh workflow run windows-test.yml` |
+| Kiểm thử trên máy Windows / Linux của GitHub (bấm tay) | tab **Actions → Windows test / Linux test → Run workflow**, hoặc `gh workflow run windows-test.yml` / `linux-test.yml` |
 
-(Trên Windows thay `python` bằng `.venv\Scripts\python`, hoặc dùng `manage.cmd <lệnh>`.)
+(Trên Windows thay `python` bằng `.venv\Scripts\python`, hoặc dùng `manage.cmd <lệnh>`. Trên Linux dùng `python3 manage.py ...`.)
 
 ## Cấu trúc
 

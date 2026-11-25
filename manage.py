@@ -1,10 +1,10 @@
-"""Công cụ quản lý dự án – chạy giống nhau trên macOS và Windows.
+"""Công cụ quản lý dự án – chạy giống nhau trên macOS, Windows và Linux.
 
   python manage.py setup                    cài lần đầu: .venv + thư viện + config.toml (khoá mới)
   python manage.py status                   kiểm tra từng thành phần có hoạt động không
   python manage.py switch-account [claude|gemini|all]   đổi tài khoản
   python manage.py new-key                  tạo khoá bí mật mới cho server Gemini
-  python manage.py install-tasks | uninstall-tasks | run-now   chạy tự động (Windows: Task Scheduler, macOS: launchd)
+  python manage.py install-tasks | uninstall-tasks | run-now   chạy tự động (Windows: Task Scheduler, macOS: launchd, Linux: systemd user)
 
 Lệnh 'setup' chỉ dùng thư viện chuẩn -> chạy được bằng Python hệ thống trước khi có .venv.
 """
@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 IS_WIN = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
+IS_LINUX = platform.system() == "Linux"
 VENV_DIR = ROOT / ".venv"
 VENV_PY = VENV_DIR / ("Scripts/python.exe" if IS_WIN else "bin/python")
 CONFIG = ROOT / "config.toml"
@@ -80,7 +81,13 @@ def cmd_setup(_args) -> None:
         sys.exit("Cần Python 3.11 trở lên (để có tomllib).")
     if not VENV_PY.exists():
         print("Tạo môi trường ảo .venv ...")
-        venv.create(VENV_DIR, with_pip=True)
+        try:
+            venv.create(VENV_DIR, with_pip=True)
+        except (subprocess.CalledProcessError, ImportError):
+            import shutil
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+            sys.exit("Không tạo được .venv." + (
+                " Debian/Ubuntu: sudo apt install python3-venv  (rồi chạy lại setup)." if IS_LINUX else ""))
     print("Cài thư viện từ requirements.txt ...")
     subprocess.run([str(VENV_PY), "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
     subprocess.run([str(VENV_PY), "-m", "pip", "install", "-q", "-r", str(ROOT / "requirements.txt")], check=True)
@@ -174,6 +181,13 @@ def cmd_status(_args) -> None:
             check(False, "Chưa cài chạy tự động", "python manage.py install-tasks")
         for ok, msg in tasks:
             check(ok, msg, "xem logs/monitor.log, logs/receiver.log")
+    elif IS_LINUX:
+        print("\nsystemd (chạy tự động)")
+        tasks = linux_task_lines()
+        if not tasks:
+            check(False, "Chưa cài chạy tự động", "python3 manage.py install-tasks")
+        for ok, msg in tasks:
+            check(ok, msg, "xem logs/monitor.log, logs/receiver.log hoặc: journalctl --user -u aiusagemonitor-receiver")
 
     log = ROOT / "logs" / "monitor.log"
     if log.exists():
@@ -421,17 +435,129 @@ def mac_task_lines() -> list[tuple[bool, str]]:
     return out
 
 
+# ---------------- Linux systemd (user) ----------------
+SYSTEMD_DIR = Path.home() / ".config" / "systemd" / "user"
+LINUX_SERVER = "aiusagemonitor-receiver"
+LINUX_UPDATE = "aiusagemonitor-update"
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+
+
+def _unit_path(value) -> str:
+    return str(value).replace("%", "%%")
+
+
+def _unit_quote(value) -> str:
+    """Đường dẫn có khoảng trắng trong file .service phải đặt trong dấu nháy kép."""
+    return '"' + _unit_path(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _linux_install_tasks() -> None:
+    if not VENV_PY.exists():
+        sys.exit("Chưa có .venv – chạy: python3 manage.py setup")
+    if _systemctl("--version").returncode != 0:
+        sys.exit("Không dùng được 'systemctl --user' (distro không có systemd?). "
+                 "Xem docs/HUONG_DAN_LINUX.md, mục chạy tự động bằng cron.")
+    port = load_config()["gemini"].get("port", 8765)
+    if port_open(port):
+        sys.exit(f"Cổng {port} đang bận: hãy TẮT server gemini_receiver.py đang chạy tay (Ctrl+C) rồi chạy lại "
+                 "lệnh này – systemd sẽ thay nó chạy nền.")
+    (ROOT / "logs").mkdir(exist_ok=True)
+    SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
+    env = "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin\nEnvironment=PYTHONUNBUFFERED=1"
+    units = {
+        f"{LINUX_SERVER}.service": f"""[Unit]
+Description=AI Usage Monitor - server nhan so lieu Gemini
+
+[Service]
+WorkingDirectory={_unit_path(ROOT)}
+ExecStart={_unit_quote(VENV_PY)} gemini_receiver.py
+Restart=always
+RestartSec=5
+{env}
+
+[Install]
+WantedBy=default.target
+""",
+        f"{LINUX_UPDATE}.service": f"""[Unit]
+Description=AI Usage Monitor - cap nhat the E-ink
+
+[Service]
+Type=oneshot
+WorkingDirectory={_unit_path(ROOT)}
+ExecStart={_unit_quote(VENV_PY)} main.py
+{env}
+""",
+        f"{LINUX_UPDATE}.timer": f"""[Unit]
+Description=AI Usage Monitor - cap nhat the moi {UPDATE_EVERY_MIN} phut
+
+[Timer]
+OnActiveSec=1min
+OnUnitActiveSec={UPDATE_EVERY_MIN}min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+""",
+    }
+    for name, text in units.items():
+        (SYSTEMD_DIR / name).write_text(text, encoding="utf-8")
+    _systemctl("daemon-reload")
+    for unit in (f"{LINUX_SERVER}.service", f"{LINUX_UPDATE}.timer"):
+        r = _systemctl("enable", "--now", unit)
+        if r.returncode != 0:
+            sys.exit(f"systemctl enable {unit} lỗi: {r.stderr.strip()}")
+    print(f"Đã cài 3 unit systemd (người dùng) trong {SYSTEMD_DIR}:")
+    print(f"  - {LINUX_SERVER}.service: server Gemini chạy nền, tự bật lại (log: logs/receiver.log)")
+    print(f"  - {LINUX_UPDATE}.timer: sau 1 phút rồi mỗi {UPDATE_EVERY_MIN} phút gọi main.py (log: logs/monitor.log)")
+    user = os.environ.get("USER", "<tên-bạn>")
+    print(f"\nĐể chạy cả khi chưa đăng nhập sau khi khởi động máy (không bắt buộc): sudo loginctl enable-linger {user}")
+    print("Đợi ~1 phút rồi kiểm tra: python3 manage.py status")
+
+
+def _linux_uninstall_tasks() -> None:
+    for unit in (f"{LINUX_UPDATE}.timer", f"{LINUX_SERVER}.service"):
+        _systemctl("disable", "--now", unit)
+    for name in (f"{LINUX_SERVER}.service", f"{LINUX_UPDATE}.service", f"{LINUX_UPDATE}.timer"):
+        (SYSTEMD_DIR / name).unlink(missing_ok=True)
+    _systemctl("daemon-reload")
+    print("Đã gỡ các unit systemd của AI Usage Monitor.")
+
+
+def _linux_run_now() -> None:
+    r = _systemctl("start", "--no-block", f"{LINUX_UPDATE}.service")
+    print("Đã chạy cập nhật. Xem kết quả: logs/monitor.log" if r.returncode == 0
+          else f"Chưa cài chạy tự động? ({r.stderr.strip()}) -> python3 manage.py install-tasks")
+
+
+def linux_task_lines() -> list[tuple[bool, str]]:
+    out = []
+    for unit, name in ((f"{LINUX_SERVER}.service", "Server Gemini"), (f"{LINUX_UPDATE}.timer", "Hẹn giờ cập nhật thẻ")):
+        if not (SYSTEMD_DIR / unit).exists():
+            continue
+        active = _systemctl("is-active", unit).stdout.strip() or "?"
+        enabled = _systemctl("is-enabled", unit).stdout.strip() or "?"
+        out.append((active in ("active", "activating") and enabled == "enabled",
+                    f"{name} ({unit}): {active}, {enabled}"))
+    if (SYSTEMD_DIR / f"{LINUX_UPDATE}.service").exists():
+        res = _systemctl("show", f"{LINUX_UPDATE}.service", "-p", "Result", "--value").stdout.strip()
+        out.append((res in ("success", ""), f"Lần chạy cập nhật gần nhất: {res or 'chưa chạy'}"))
+    return out
+
+
 # ---------------- chọn theo hệ điều hành ----------------
 def cmd_install_tasks(_args) -> None:
-    _win_install_tasks() if IS_WIN else _mac_install_tasks() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+    _win_install_tasks() if IS_WIN else _mac_install_tasks() if IS_MAC else _linux_install_tasks() if IS_LINUX else sys.exit("Hệ điều hành này chưa được hỗ trợ.")
 
 
 def cmd_uninstall_tasks(_args) -> None:
-    _win_uninstall_tasks() if IS_WIN else _mac_uninstall_tasks() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+    _win_uninstall_tasks() if IS_WIN else _mac_uninstall_tasks() if IS_MAC else _linux_uninstall_tasks() if IS_LINUX else sys.exit("Hệ điều hành này chưa được hỗ trợ.")
 
 
 def cmd_run_now(_args) -> None:
-    _win_run_now() if IS_WIN else _mac_run_now() if IS_MAC else sys.exit("Chỉ hỗ trợ Windows/macOS.")
+    _win_run_now() if IS_WIN else _mac_run_now() if IS_MAC else _linux_run_now() if IS_LINUX else sys.exit("Hệ điều hành này chưa được hỗ trợ.")
 
 
 def cmd_switch(args) -> None:
@@ -466,7 +592,7 @@ def main() -> None:
     sub.add_parser("setup", help="cài lần đầu").set_defaults(func=cmd_setup)
     sub.add_parser("status", help="kiểm tra tổng thể").set_defaults(func=cmd_status)
     sub.add_parser("new-key", help="tạo khoá bí mật mới").set_defaults(func=cmd_new_key)
-    sub.add_parser("install-tasks", help="cài chạy tự động (Windows: Task Scheduler, macOS: launchd)").set_defaults(func=cmd_install_tasks)
+    sub.add_parser("install-tasks", help="cài chạy tự động (Windows: Task Scheduler, macOS: launchd, Linux: systemd)").set_defaults(func=cmd_install_tasks)
     sub.add_parser("uninstall-tasks", help="gỡ chạy tự động").set_defaults(func=cmd_uninstall_tasks)
     sub.add_parser("run-now", help="chạy cập nhật ngay").set_defaults(func=cmd_run_now)
     sw = sub.add_parser("switch-account", help="đổi tài khoản")
